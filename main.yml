@@ -1,0 +1,67 @@
+---
+
+#
+# Provision the Ansible master host
+#
+# The user needs to supply the path to a pubsys-ansible tarball in the variable {{ pubsys_ansible_tarball }}.
+# See utilities/create-pubsys-ansible-tarball.py script for details.
+#
+# The tarball will be unpacked into /Local/PlatformTools/pubsys/pubsys-ansible-<version> and a symlink
+# created from pubsys-ansible-<version> to pubsys-ansible.
+#
+
+- shell: date +%Y-%m-%d%n%H:%M:%S' %Z'
+  register: output_date
+
+- fail: msg="You must supply the variable pubsys_base_dir_tarball in --extra-vars or role defaults"
+  when: pubsys_base_dir_tarball is undefined
+
+- name: Create the top-level pubsys folder
+  file: path="{{ pubsys_base_folder }}" state=directory owner=worun group=worun mode=0755
+
+- name: Create remote temp folder
+  command: mktemp -d
+  register: remote_tmpdir
+
+- name: creating pubsys ansible tarball on local
+  local_action: command  chdir="{{ git_base }}/utilities/" ./create-pubsys-ansible-tarball.py -version "{{ output_date.stdout }}" -dir "{{ pubsys_base_dir_tarball }}" -dirpath {{ item }}
+  register: output_pubsys
+  become: false
+  changed_when: "output_pubsys.rc == 0"
+  with_items:
+      - ansible 
+      - utilities
+
+- name: "{{ pubsys_base_dir_tarball }}/ansible-{{ output_date.stdout }}.tgz created" 
+  local_action: command ls -1 "{{ pubsys_base_dir_tarball }}"/"{{ item }}-{{ output_date.stdout }}".tgz
+  become: false
+  with_items:
+      - ansible
+      - utilities
+
+- name: Copy the pubsys-ansible tarball to the remote system
+  copy: src="{{ pubsys_base_dir_tarball}}/{{ item }}" dest="{{ remote_tmpdir.stdout }}/"
+  with_items:
+     - ansible-{{ output_date.stdout }}.tgz
+     - utilities-{{ output_date.stdout }}.tgz
+
+- name: Unpack the pubsys-ansible tarball
+  unarchive: src="{{ remote_tmpdir.stdout }}/{{ item | basename }}" dest="{{ pubsys_base_folder }}" copy=no owner=worun
+  with_items:
+     - ansible-{{ output_date.stdout }}.tgz
+     - utilities-{{ output_date.stdout }}.tgz
+
+- name: Create the pubsys-ansible symlink
+  file: path="{{ pubsys_base_folder }}/pubsys-ansible" state=link src="ansible-{{ output_date.stdout }}" owner=worun group=worun
+
+- name: Create the pubsys-ansible symlink
+  file: path="{{ pubsys_base_folder }}/pubsys-ansible/utilities" state=link src="../utilities-{{ output_date.stdout }}" owner=worun group=worun force=yes
+
+- name: Clean up remote temp folder
+  file: path={{ remote_tmpdir.stdout }} state=absent
+
+- shell: ansible --version | head -1 | awk {'print $2'}
+  register: output_ansible_version
+
+- name: Versions info 
+  debug: msg="ansible version ==> {{ output_ansible_version.stdout }}  pubsys_ansible_tarball ==> {{ pubsys_base_dir_tarball }}/ansible-{{ output_date.stdout }}.tgz  utilities_tarball ==>  {{ pubsys_base_dir_tarball }}/utilities-{{ output_date.stdout }}.tgz"
